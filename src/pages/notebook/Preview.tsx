@@ -36,8 +36,9 @@ function activeFields(settings: CardFields): string[] {
  * Step 3 of the capture flow.
  *
  * Receives `words: string[]` from Select via navigation state, calls the
- * `generate-word` Edge Function for each word concurrently, then lets the user
- * review and edit the generated cards before saving to the `words` table.
+ * `generate-word` Edge Function for each word with a 200 ms stagger between
+ * requests (Gemini free tier: 10 RPM), then lets the user review and edit the
+ * generated cards before saving to the `words` table.
  */
 export default function Preview() {
   const { id: notebookId } = useParams<{ id: string }>()
@@ -63,7 +64,11 @@ export default function Preview() {
   useEffect(() => {
     if (generatedRef.current || words.length === 0) return
     generatedRef.current = true
-    words.forEach((w, i) => generateCard(w, i))
+    // Stagger requests by 200 ms each to stay within Gemini free-tier limits
+    // (10 RPM). Fire-and-forget; each generateCard handles its own error state.
+    words.forEach((w, i) => {
+      setTimeout(() => void generateCard(w, i), i * 200)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

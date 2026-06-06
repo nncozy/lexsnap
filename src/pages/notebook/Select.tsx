@@ -56,20 +56,38 @@ function tokenize(rawText: string): Token[] {
 
 // ── drag state (kept in a ref to avoid stale closures) ────────────────────────
 
+/** Minimum pointer displacement (px) before we commit to a gesture. */
+const GESTURE_THRESHOLD = 5
+
 interface DragState {
   active: boolean
   pointerId: number
+  /** clientX/Y at pointerdown — used to measure displacement. */
+  startX: number
+  startY: number
+  /** clientY at the last processed pointermove — used to compute scroll delta. */
+  lastY: number
   startId: number
   currentId: number
+  /** Pointer has crossed token boundaries while in selection mode. */
   hasMoved: boolean
+  /** Gesture direction (scroll vs. select) has been determined. */
+  decided: boolean
+  /** True when the gesture was classified as a vertical scroll. */
+  isScrolling: boolean
 }
 
 const IDLE_DRAG: DragState = {
   active: false,
   pointerId: -1,
+  startX: 0,
+  startY: 0,
+  lastY: 0,
   startId: -1,
   currentId: -1,
   hasMoved: false,
+  decided: false,
+  isScrolling: false,
 }
 
 // ── component ──────────────────────────────────────────────────────────────────
@@ -139,10 +157,12 @@ export default function Select() {
   // ── selection ─────────────────────────────────────────────────────────────
 
   const [selectedWords, setSelectedWords] = useState<string[]>([])
-  // [startTokenId, currentTokenId] while drag is in progress; null otherwise.
+  // [startTokenId, currentTokenId] while a selection drag is in progress.
   const [dragRange, setDragRange] = useState<[number, number] | null>(null)
 
   const dragRef = useRef<DragState>({ ...IDLE_DRAG })
+  /** Ref to the overflow-y-auto scroll container for manual scrollBy. */
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   function getTokenIdAt(x: number, y: number): number | null {
     const el = document.elementFromPoint(x, y)
@@ -153,56 +173,101 @@ export default function Select() {
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     const tid = getTokenIdAt(e.clientX, e.clientY)
     if (tid == null) return
-    // Capture the pointer so move/up events are delivered even if finger moves
-    // off the element, and so the browser treats this as a custom interaction.
+    // Capture immediately so we receive all subsequent move/up events even if
+    // the finger drifts outside this element.
     e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = {
       active: true,
       pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      lastY: e.clientY,
       startId: tid,
       currentId: tid,
       hasMoved: false,
+      decided: false,
+      isScrolling: false,
     }
-    setDragRange([tid, tid])
+    // dragRange stays null until gesture direction is confirmed.
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
     const drag = dragRef.current
     if (!drag.active || drag.pointerId !== e.pointerId) return
-    const tid = getTokenIdAt(e.clientX, e.clientY)
-    if (tid == null || tid === drag.currentId) return
-    drag.hasMoved = true
-    drag.currentId = tid
-    setDragRange([drag.startId, tid])
+
+    // ── Continuing a confirmed scroll gesture ─────────────────────────────
+    if (drag.isScrolling) {
+      const delta = drag.lastY - e.clientY   // > 0 = finger moved up → scroll down
+      drag.lastY = e.clientY
+      scrollRef.current?.scrollBy({ top: delta })
+      return
+    }
+
+    // ── Continuing a confirmed selection gesture ──────────────────────────
+    if (drag.decided) {
+      const tid = getTokenIdAt(e.clientX, e.clientY)
+      if (tid != null && tid !== drag.currentId) {
+        drag.hasMoved = true
+        drag.currentId = tid
+        setDragRange([drag.startId, tid])
+      }
+      return
+    }
+
+    // ── Not yet decided — wait for GESTURE_THRESHOLD px of displacement ───
+    const dx = e.clientX - drag.startX
+    const dy = e.clientY - drag.startY
+    if (Math.hypot(dx, dy) < GESTURE_THRESHOLD) return
+
+    // Direction decision: vertical dominant → scroll; otherwise → select.
+    if (Math.abs(dy) > Math.abs(dx)) {
+      drag.decided = true
+      drag.isScrolling = true
+      drag.lastY = e.clientY
+      // Flush the accumulated displacement since pointerdown as a scroll step.
+      scrollRef.current?.scrollBy({ top: -dy })
+      setDragRange(null)
+    } else {
+      drag.decided = true
+      // Start showing the selection range at the current token.
+      const tid = getTokenIdAt(e.clientX, e.clientY)
+      if (tid != null && tid !== drag.currentId) {
+        drag.hasMoved = true
+        drag.currentId = tid
+      }
+      setDragRange([drag.startId, drag.currentId])
+    }
   }
 
   function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
     const drag = dragRef.current
     if (!drag.active || drag.pointerId !== e.pointerId) return
 
-    if (drag.hasMoved) {
-      // Range drag → build a phrase from all word tokens in the range.
-      const lo = Math.min(drag.startId, drag.currentId)
-      const hi = Math.max(drag.startId, drag.currentId)
-      const phrase = tokens
-        .filter((t) => t.id >= lo && t.id <= hi && t.isWord)
-        .map((t) => t.word)
-        .join(' ')
-        .trim()
-      if (phrase) {
-        setSelectedWords((prev) =>
-          prev.includes(phrase) ? prev : [...prev, phrase],
-        )
-      }
-    } else {
-      // Single tap → toggle individual word.
-      const tok = tokens.find((t) => t.id === drag.startId)
-      if (tok?.isWord && tok.word) {
-        setSelectedWords((prev) =>
-          prev.includes(tok.word)
-            ? prev.filter((w) => w !== tok.word)
-            : [...prev, tok.word],
-        )
+    if (!drag.isScrolling) {
+      if (drag.hasMoved) {
+        // Range drag → build a phrase from all word tokens in the range.
+        const lo = Math.min(drag.startId, drag.currentId)
+        const hi = Math.max(drag.startId, drag.currentId)
+        const phrase = tokens
+          .filter((t) => t.id >= lo && t.id <= hi && t.isWord)
+          .map((t) => t.word)
+          .join(' ')
+          .trim()
+        if (phrase) {
+          setSelectedWords((prev) =>
+            prev.includes(phrase) ? prev : [...prev, phrase],
+          )
+        }
+      } else {
+        // Tap (or sub-threshold move) → toggle individual word.
+        const tok = tokens.find((t) => t.id === drag.startId)
+        if (tok?.isWord && tok.word) {
+          setSelectedWords((prev) =>
+            prev.includes(tok.word)
+              ? prev.filter((w) => w !== tok.word)
+              : [...prev, tok.word],
+          )
+        }
       }
     }
 
@@ -298,7 +363,7 @@ export default function Select() {
       {/* ── Scrollable OCR text area ────────────────────────────────────────
           min-h-0 is required on a flex child to allow it to shrink below its
           content height, which enables overflow-y-auto to actually scroll. */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
         {ocrPhase === 'running' && <OcrProgressBar />}
 
         {ocrPhase === 'error' && (
