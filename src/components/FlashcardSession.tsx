@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { updateWord } from '@/lib/words'
 import { useSettings } from '@/contexts/SettingsContext'
+import { useSpeech } from '@/hooks/useSpeech'
 import type { Word, WordStatus } from '@/types'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ interface ChoiceRecord {
 /**
  * Full-screen flashcard session overlay.
  *
- * Front: word + IPA + part of speech + わかる/わからない buttons (always visible).
+ * Front: word + 🔊 button + IPA + part of speech + わかる/わからない buttons.
  * Long press (500 ms) on the card area fades in an overlay showing meanings,
  * example, and nuance. Releasing hides the overlay.
  * Done: summary screen with counts.
@@ -35,6 +36,8 @@ interface ChoiceRecord {
  */
 export default function FlashcardSession({ words, onClose, onFinish }: Props) {
   const { settings } = useSettings()
+  const { speak, stop, isSpeaking, isSupported } = useSpeech()
+
   const total = words.length
   const [index, setIndex] = useState(0)
   const [showOverlay, setShowOverlay] = useState(false)
@@ -44,14 +47,17 @@ export default function FlashcardSession({ words, onClose, onFinish }: Props) {
   const guardRef = useRef(false)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Reset per-card state when moving to next card.
+  // Reset per-card state (including speech) when moving to the next card.
   useEffect(() => {
     guardRef.current = false
     setShowOverlay(false)
+    stop()
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current)
       longPressTimer.current = null
     }
+  // `stop` is stable (useCallback), adding it doesn't cause extra re-runs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index])
 
   const current = words[index]
@@ -61,6 +67,7 @@ export default function FlashcardSession({ words, onClose, onFinish }: Props) {
   function handleChoose(status: WordStatus) {
     if (!current || guardRef.current) return
     guardRef.current = true
+    stop() // stop any ongoing speech before advancing
 
     // Fire-and-forget — UI never waits for the DB round-trip.
     void updateWord(current.id, { status }).catch(() => {
@@ -192,7 +199,28 @@ export default function FlashcardSession({ words, onClose, onFinish }: Props) {
       >
         {/* Front face */}
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-          <p className="break-all text-4xl font-bold">{current.word}</p>
+          {/* Word + speaker button (row) */}
+          <div className="flex items-center gap-2">
+            <p className="break-all text-4xl font-bold">{current.word}</p>
+
+            {/* 🔊 speaker button — stopPropagation prevents the long-press timer
+                from starting when the user taps the button. */}
+            {isSupported && (
+              <button
+                type="button"
+                aria-label={isSpeaking ? '読み上げを停止' : `「${current.word}」を読み上げ`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => speak(current.word)}
+                className={`shrink-0 rounded-full p-2 transition-colors ${
+                  isSpeaking
+                    ? 'animate-pulse bg-primary/10 text-primary'
+                    : 'text-gray-300 hover:bg-gray-100 hover:text-muted'
+                }`}
+              >
+                <SpeakerIcon />
+              </button>
+            )}
+          </div>
 
           {current.pronunciation && (
             <p className="text-muted">{current.pronunciation}</p>
@@ -296,5 +324,16 @@ function Overlay({ children }: { children: ReactNode }) {
     <div className="fixed inset-0 z-50 mx-auto flex max-w-md flex-col bg-white">
       {children}
     </div>
+  )
+}
+
+// ── icons ─────────────────────────────────────────────────────────────────────
+
+/** Volume-up speaker icon (Material Design). */
+function SpeakerIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+    </svg>
   )
 }

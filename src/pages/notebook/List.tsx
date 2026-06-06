@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { fetchNotebook } from '@/lib/notebooks'
 import { fetchWords, updateWord, deleteWord } from '@/lib/words'
+import { useSpeech } from '@/hooks/useSpeech'
 import type { Word, WordStatus } from '@/types'
 
 // ── CSV export ────────────────────────────────────────────────────────────────
@@ -409,6 +410,7 @@ function DetailSheet({
   onDelete,
 }: DetailSheetProps) {
   const d = draft ?? toEditDraft(word)
+  const { speak, isSpeaking, isSupported } = useSpeech()
 
   return (
     <>
@@ -514,7 +516,25 @@ function DetailSheet({
             </>
           ) : (
             <div>
-              <h2 className="text-2xl font-bold">{word.word}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-bold">{word.word}</h2>
+
+                {/* 🔊 button — only rendered when Web Speech API is available */}
+                {isSupported && (
+                  <button
+                    type="button"
+                    onClick={() => speak(word.word)}
+                    aria-label={isSpeaking ? '読み上げを停止' : `「${word.word}」を読み上げ`}
+                    className={`shrink-0 rounded-full p-2 transition-colors ${
+                      isSpeaking
+                        ? 'animate-pulse bg-primary/10 text-primary'
+                        : 'text-gray-300 hover:bg-gray-100 hover:text-muted'
+                    }`}
+                  >
+                    <SpeakerIcon />
+                  </button>
+                )}
+              </div>
               {(word.pronunciation || word.pronunciation_kana || word.part_of_speech) && (
                 <p className="mt-0.5 text-sm text-muted">
                   {[word.pronunciation, word.pronunciation_kana, word.part_of_speech]
@@ -785,6 +805,15 @@ function DownloadIcon() {
         fillRule="evenodd"
         d="M3 17a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H4a1 1 0 0 1-1-1zm3.293-7.707a1 1 0 0 1 1.414 0L9 10.586V3a1 1 0 1 1 2 0v7.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3a1 1 0 0 1 0-1.414z"
       />
+    </svg>
+  )
+}
+
+/** Volume-up speaker icon (Material Design). */
+function SpeakerIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
     </svg>
   )
 }
