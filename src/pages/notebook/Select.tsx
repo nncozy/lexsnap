@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { recognizeText } from '@/lib/ocr'
+import { supabase } from '@/lib/supabase'
 
 // ── token model ────────────────────────────────────────────────────────────────
 
@@ -95,33 +95,42 @@ export default function Select() {
   const { state } = useLocation()
   const imageDataUrl = (state as { imageDataUrl?: string } | null)?.imageDataUrl
 
-  // ── OCR ───────────────────────────────────────────────────────────────────
+  // ── OCR (Gemini Vision via Edge Function) ────────────────────────────────
 
   type OcrPhase = 'running' | 'done' | 'error'
   const [ocrPhase, setOcrPhase] = useState<OcrPhase>('running')
-  const [ocrProgress, setOcrProgress] = useState(0)
-  const [ocrStatusText, setOcrStatusText] = useState('OCR を開始中…')
   const [tokens, setTokens] = useState<Token[]>([])
 
   useEffect(() => {
     if (!imageDataUrl) return
     let cancelled = false
 
-    recognizeText(imageDataUrl, (progress, statusText) => {
-      if (!cancelled) {
-        setOcrProgress(progress)
-        setOcrStatusText(statusText)
-      }
-    })
-      .then((text) => {
-        if (cancelled) return
-        setTokens(tokenize(text))
-        setOcrPhase('done')
-      })
-      .catch(() => {
+    async function runOcr() {
+      // Split "data:<mimeType>;base64,<data>" → mimeType + raw base64
+      const match = imageDataUrl!.match(/^data:([^;]+);base64,(.+)$/)
+      if (!match) {
         if (!cancelled) setOcrPhase('error')
-      })
+        return
+      }
+      const [, mimeType, imageBase64] = match
 
+      try {
+        const { data, error } = await supabase.functions.invoke<{ text: string }>(
+          'ocr-image',
+          { body: { imageBase64, mimeType } },
+        )
+        if (cancelled) return
+        if (error) throw error
+        if (!data?.text) throw new Error('Empty OCR response')
+        setTokens(tokenize(data.text))
+        setOcrPhase('done')
+      } catch (e) {
+        console.error('OCR error:', e)
+        if (!cancelled) setOcrPhase('error')
+      }
+    }
+
+    void runOcr()
     return () => {
       cancelled = true
     }
@@ -285,9 +294,7 @@ export default function Select() {
 
       {/* OCR content area */}
       <div className="p-4 pb-52">
-        {ocrPhase === 'running' && (
-          <OcrProgressBar progress={ocrProgress} statusText={ocrStatusText} />
-        )}
+        {ocrPhase === 'running' && <OcrProgressBar />}
 
         {ocrPhase === 'error' && (
           <p className="text-review text-sm">
@@ -375,25 +382,13 @@ export default function Select() {
 
 // ── helper components ─────────────────────────────────────────────────────────
 
-function OcrProgressBar({
-  progress,
-  statusText,
-}: {
-  progress: number
-  statusText: string
-}) {
-  const pct = Math.round(progress * 100)
+/** Indeterminate loading bar shown while the Edge Function processes the image. */
+function OcrProgressBar() {
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between text-xs text-muted">
-        <span>{statusText}</span>
-        <span>{pct}%</span>
-      </div>
+      <span className="text-xs text-muted">テキストを抽出中…</span>
       <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-        <div
-          className="bg-primary h-full rounded-full transition-all duration-300"
-          style={{ width: `${pct}%` }}
-        />
+        <div className="bg-primary/50 h-full w-1/2 animate-pulse rounded-full" />
       </div>
     </div>
   )
