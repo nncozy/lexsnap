@@ -1,0 +1,32 @@
+@import 'tailwindcss';
+
+/*
+ * LexSnap design tokens (see instructions section 2).
+ * Tailwind v4 is CSS-first: colors declared here become utilities
+ * such as `bg-primary`, `text-known`, `border-review`, etc.
+ */
+@theme {
+  --color-primary: #4f46e5; /* indigo blue */
+  --color-ink: #0f0f0f; /* near-black text */
+  --color-muted: #6b7280; /* secondary gray */
+  --color-canvas: #f9fafb; /* light background */
+
+  /* Status colors (abceed-style) */
+  --color-known: #10b981; /* 習得済 / known */
+  --color-review: #f43f5e; /* 要復習 / review */
+  --color-unstudied: #9ca3af; /* 未学習 / unstudied */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-canvas text-ink antialiased;
+  font-family:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', Meiryo,
+    sans-serif;
+}
