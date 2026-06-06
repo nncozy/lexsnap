@@ -77,17 +77,17 @@ const IDLE_DRAG: DragState = {
 /**
  * Step 2 of the capture flow.
  *
- * Receives the image data-URL via navigation state, runs Tesseract OCR, then
- * renders the recognised text as tappable word tokens.
+ * Receives the image data-URL via navigation state, calls the `ocr-image`
+ * Edge Function (Gemini Vision), then renders the recognised text as tappable
+ * word tokens.
  *
- * Interactions:
- *   Tap a word   → toggle that word in the selection list.
- *   Drag across  → select a contiguous phrase (all words in the dragged range).
+ * Layout: h-dvh flex-col so the page never scrolls — the middle text area is
+ * the only scrollable region (flex-1 overflow-y-auto).  The header, image
+ * thumbnail, and bottom panel are fixed-height shrink-0 rows.
  *
- * Note (Phase 3): `touch-action: none` on the token container prevents the
- * browser from scrolling when the user touches inside the text area.  Users
- * can scroll the page by touching the image preview or the header/footer areas.
- * This will be revisited once the notebook layout tabs are implemented.
+ * Touch note: `touch-action: none` on the token container hands all pointer
+ * events to our drag-selection logic.  The outer scroll container can still
+ * be scrolled by starting a swipe in the padding area (top/bottom of text).
  */
 export default function Select() {
   const { id: notebookId } = useParams<{ id: string }>()
@@ -269,9 +269,12 @@ export default function Select() {
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-md">
-      {/* Sticky header */}
-      <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-gray-100 bg-white px-4 py-3">
+    // h-dvh: fills the visible viewport including mobile browser chrome.
+    // overflow-hidden: prevents the page itself from scrolling.
+    <div className="mx-auto flex h-dvh max-w-md flex-col overflow-hidden bg-white">
+
+      {/* ── Header ── shrink-0 so it never compresses */}
+      <header className="shrink-0 flex items-center gap-3 border-b border-gray-100 bg-white px-4 py-3">
         <button
           type="button"
           onClick={() => navigate(-1)}
@@ -283,17 +286,19 @@ export default function Select() {
         <h1 className="font-semibold">単語を選択</h1>
       </header>
 
-      {/* Image thumbnail */}
-      <div className="border-b border-gray-100 bg-gray-50">
+      {/* ── Image thumbnail — max-h-40 keeps it compact on small screens */}
+      <div className="shrink-0 border-b border-gray-100 bg-gray-50">
         <img
           src={imageDataUrl}
           alt="OCR 元画像"
-          className="mx-auto max-h-36 w-full object-contain"
+          className="mx-auto max-h-40 w-full object-contain"
         />
       </div>
 
-      {/* OCR content area */}
-      <div className="p-4 pb-52">
+      {/* ── Scrollable OCR text area ────────────────────────────────────────
+          min-h-0 is required on a flex child to allow it to shrink below its
+          content height, which enables overflow-y-auto to actually scroll. */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {ocrPhase === 'running' && <OcrProgressBar />}
 
         {ocrPhase === 'error' && (
@@ -320,10 +325,9 @@ export default function Select() {
             <p className="text-muted mb-3 text-xs">
               タップで単語を選択 / ドラッグで熟語を選択
             </p>
-            {/* ── token container ──
-                touch-action: none prevents native browser scroll within this
-                div so pointer events can be used for word selection.
-                Users can scroll the page by touching outside this area. */}
+            {/* touch-action: none hands all gestures to our pointer handlers.
+                Scroll the text area by starting a swipe from the padding
+                region above or below this container. */}
             <div
               className="select-none leading-relaxed"
               style={{ touchAction: 'none' }}
@@ -334,12 +338,20 @@ export default function Select() {
             >
               {tokens.map(renderToken)}
             </div>
+            {/* Extra bottom padding so the last token is not obscured and
+                there is a touchable area to initiate a scroll from below. */}
+            <div className="h-6" aria-hidden="true" />
           </>
         )}
       </div>
 
-      {/* Sticky bottom panel */}
-      <div className="fixed inset-x-0 bottom-0 border-t border-gray-100 bg-canvas px-4 py-4 sm:max-w-md sm:mx-auto">
+      {/* ── Bottom panel ── shrink-0; sticks to the bottom of the flex column.
+          paddingBottom uses env(safe-area-inset-bottom) for iOS home-bar
+          devices; falls back to 1.5 rem on other platforms. */}
+      <div
+        className="shrink-0 border-t border-gray-100 bg-canvas px-4 pt-3"
+        style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
+      >
         {selectedWords.length > 0 && (
           <div className="mb-3 flex max-h-20 flex-wrap gap-2 overflow-y-auto">
             {selectedWords.map((w) => (
