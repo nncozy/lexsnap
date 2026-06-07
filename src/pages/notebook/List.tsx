@@ -528,7 +528,7 @@ function DetailSheet({
                     className={`shrink-0 rounded-full p-2 transition-colors ${
                       isSpeaking
                         ? 'animate-pulse bg-primary/10 text-primary'
-                        : 'text-gray-300 hover:bg-gray-100 hover:text-muted'
+                        : 'text-muted hover:bg-gray-100 hover:text-ink'
                     }`}
                   >
                     <SpeakerIcon />
